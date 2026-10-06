@@ -43,26 +43,26 @@ type junitDocument struct {
 }
 
 type junitSuite struct {
-	Name      string       `xml:"name,attr"`
-	Timestamp string       `xml:"timestamp,attr"`
-	Time      string       `xml:"time,attr"`
-	Cases     []junitCase  `xml:"testcase"`
-	Suites    []junitSuite `xml:"testsuite"`
-	SystemOut string       `xml:"system-out"`
-	SystemErr string       `xml:"system-err"`
+	Name      string        `xml:"name,attr"`
+	Timestamp string        `xml:"timestamp,attr"`
+	Time      string        `xml:"time,attr"`
+	Cases     []junitCase   `xml:"testcase"`
+	Suites    []junitSuite  `xml:"testsuite"`
+	SystemOut string        `xml:"system-out"`
+	SystemErr string        `xml:"system-err"`
 }
 
 type junitCase struct {
-	Name       string          `xml:"name,attr"`
-	ClassName  string          `xml:"classname,attr"`
-	Time       string          `xml:"time,attr"`
-	Timestamp  string          `xml:"timestamp,attr"`
-	Status     string          `xml:"status,attr"`
-	Failure    *junitDetail    `xml:"failure"`
-	Error      *junitDetail    `xml:"error"`
-	Skipped    *junitDetail    `xml:"skipped"`
-	SystemOut  string          `xml:"system-out"`
-	SystemErr  string          `xml:"system-err"`
+	Name       string       `xml:"name,attr"`
+	ClassName  string       `xml:"classname,attr"`
+	Time       string       `xml:"time,attr"`
+	Timestamp  string       `xml:"timestamp,attr"`
+	Status     string       `xml:"status,attr"`
+	Failure    *junitDetail `xml:"failure"`
+	Error      *junitDetail `xml:"error"`
+	Skipped    *junitDetail `xml:"skipped"`
+	SystemOut  string       `xml:"system-out"`
+	SystemErr  string       `xml:"system-err"`
 	Properties []junitProperty `xml:"properties>property"`
 }
 
