@@ -1,8 +1,8 @@
 ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12@sha256:06c3c14b7fa252d9f4285242d2d665ce3b51f74b02d3c529464f220f2912aecb
 FROM ${RUNTIME_IMAGE}
 COPY --chown=65532:65532 release/linux/arm64/qtest-publisher /qtest-publisher
-LABEL org.opencontainers.image.source="https://git.harness.io/gCoPSwHxS7ipOgx2iA9tOQ/default/Drone_Plugins/qtest-publisher" \
-      org.opencontainers.image.revision="0f732e8585cd7f338f4cd39b9e5defa32723d6d2" \
+LABEL org.opencontainers.image.source="https://github.com/DevanshMathur19/qtest-publisher" \
+      org.opencontainers.image.revision="816464df142eec022158fe7685772d8eabd65b82" \
       org.opencontainers.image.version="1.0.0" \
       io.harness.release.status="candidate"
 USER 65532:65532
