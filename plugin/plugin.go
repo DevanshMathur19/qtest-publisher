@@ -71,12 +71,18 @@ func Run(ctx context.Context, cfg Config, logger *log.Logger) (Outputs, error) {
 	}
 	destinationType := cfg.DestinationType
 	destinationID := cfg.DestinationID
+	output := Outputs{
+		MatchedFiles:  len(files),
+		ParsedTests:   len(cases),
+		DestinationID: destinationID,
+		ResultURL:     resultURL(cfg.BaseURL, cfg.ProjectID, destinationType, destinationID),
+	}
 	if destinationType == "release" {
 		destinationID, err = client.ResolveSuite(
 			ctx, "release", destinationID, cfg.SuiteName, cfg.ReuseSuite,
 		)
 		if err != nil {
-			return Outputs{}, err
+			return finishFailedOutput(cfg.OutputPath, output, err)
 		}
 		destinationType = "test-suite"
 	} else if destinationType == "test-cycle" && cfg.SuiteName != "" {
@@ -84,20 +90,16 @@ func Run(ctx context.Context, cfg Config, logger *log.Logger) (Outputs, error) {
 			ctx, "test-cycle", destinationID, cfg.SuiteName, cfg.ReuseSuite,
 		)
 		if err != nil {
-			return Outputs{}, err
+			return finishFailedOutput(cfg.OutputPath, output, err)
 		}
 		destinationType = "test-suite"
 	}
+	output.DestinationID = destinationID
+	output.ResultURL = resultURL(cfg.BaseURL, cfg.ProjectID, destinationType, destinationID)
 
 	logs := make([]automationLog, 0, len(results))
 	for _, result := range results {
 		logs = append(logs, toAutomationLog(result, cfg))
-	}
-	output := Outputs{
-		MatchedFiles:  len(files),
-		ParsedTests:   len(cases),
-		DestinationID: destinationID,
-		ResultURL:     resultURL(cfg.BaseURL, cfg.ProjectID, destinationType, destinationID),
 	}
 
 	if destinationType == "test-run" {

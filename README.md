@@ -72,7 +72,7 @@ Input settings become uppercase `PLUGIN_` environment variables. For example,
     identifier: publish_qtest
     spec:
       connectorRef: account.harnessImage
-      image: plugins/qtest-publisher:1.0.0
+      image: harness/qtest-publisher:1.0.0
       settings:
         qtest_url: https://example.qtestnet.com
         bearer_token: <+secrets.getValue("qtestApiToken")>

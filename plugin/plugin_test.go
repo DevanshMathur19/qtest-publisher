@@ -174,6 +174,62 @@ func TestRunWritesPartialOutputsBeforeReturningBatchFailure(t *testing.T) {
 	}
 }
 
+func TestRunWritesIndeterminateOutputsForAmbiguousSuiteCreation(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `[]`)
+			return
+		}
+		connection, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = connection.Close()
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(root, "results.xml"),
+		[]byte(`<testsuite name="suite"><testcase classname="C" name="one"/></testsuite>`),
+		0600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	old, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(old) }()
+
+	outputPath := filepath.Join(root, "output.env")
+	cfg := qtestConfig(server)
+	cfg.ResultPaths = []string{"results.xml"}
+	cfg.DestinationType = "release"
+	cfg.DestinationID = 44
+	cfg.SuiteName = "Harness"
+	cfg.ReuseSuite = true
+	cfg.IdentityMode = "method"
+	cfg.Statuses = StatusMap{Passed: "PASSED", Failed: "FAILED", Error: "FAILED", Skipped: "SKIPPED"}
+	cfg.ModuleNames = []string{"Automation"}
+	cfg.OutputPath = outputPath
+	cfg.ExecutionDate = time.Now()
+
+	output, err := Run(context.Background(), cfg, log.New(io.Discard, "", 0))
+	if err == nil || output.State != "INDETERMINATE" ||
+		output.MatchedFiles != 1 || output.ParsedTests != 1 {
+		t.Fatalf("expected indeterminate suite creation, output=%#v err=%v", output, err)
+	}
+	data, readErr := os.ReadFile(outputPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !strings.Contains(string(data), "QTEST_STATE=INDETERMINATE") ||
+		!strings.Contains(string(data), "QTEST_DESTINATION_ID=44") {
+		t.Fatalf("indeterminate reconciliation outputs missing: %s", data)
+	}
+}
+
 func TestSplitBatchesUsesCountAndEncodedBytes(t *testing.T) {
 	logs := []automationLog{
 		{Name: "one", Note: strings.Repeat("a", 100)},

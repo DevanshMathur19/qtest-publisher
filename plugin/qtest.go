@@ -266,8 +266,12 @@ func (c *QTestClient) Poll(ctx context.Context, jobID int64) (queueResponse, err
 		case "SUCCESS":
 			return response, nil
 		case "FAILED":
+			content := limitText(response.Content)
+			if c.token != "" {
+				content = strings.ReplaceAll(content, c.token, "[REDACTED]")
+			}
 			return queueResponse{}, fmt.Errorf(
-				"qTest queue job %d failed: %s", jobID, limitText(response.Content),
+				"qTest queue job %d failed: %s", jobID, content,
 			)
 		case "IN_WAITING", "IN_PROCESSING", "PENDING", "":
 		default:
