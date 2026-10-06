@@ -110,6 +110,66 @@ func TestSubmitBatchPollsAllPendingStates(t *testing.T) {
 	}
 }
 
+func TestSubmitBatchToExplicitSuite(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			if r.URL.Path != "/api/v3.1/projects/123/test-runs/0/auto-test-logs" {
+				t.Fatalf("unexpected suite endpoint: %s", r.URL.Path)
+			}
+			var body automationRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body.TestSuite != "789" || len(body.TestLogs) != 1 {
+				t.Fatalf("unexpected suite submission: %#v", body)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{"id":88,"state":"PENDING"}`)
+		case http.MethodGet:
+			_, _ = io.WriteString(w, `{"id":88,"state":"SUCCESS"}`)
+		default:
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+	}))
+	defer server.Close()
+	client, _ := NewQTestClient(qtestConfig(server))
+	submission, err := client.SubmitBatch(
+		context.Background(), "test-suite", 789,
+		[]automationLog{{Status: "PASSED", Name: "suite test", AutomationContent: "suite-id"}},
+		time.Now(),
+	)
+	if err != nil || submission.JobID != 88 || submission.DestinationID != 789 {
+		t.Fatalf("SubmitBatch suite = %#v, %v", submission, err)
+	}
+}
+
+func TestSubmitToExplicitRun(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost ||
+			r.URL.Path != "/api/v3/projects/123/test-runs/654/auto-test-logs" {
+			t.Fatalf("unexpected run request: %s %s", r.Method, r.URL.Path)
+		}
+		var body automationLog
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.AutomationContent != "run-id" || body.Status != "FAILED" {
+			t.Fatalf("unexpected run submission: %#v", body)
+		}
+		_, _ = io.WriteString(w, `{"id":654}`)
+	}))
+	defer server.Close()
+	client, _ := NewQTestClient(qtestConfig(server))
+	submission, err := client.SubmitToRun(
+		context.Background(), 654,
+		automationLog{Status: "FAILED", Name: "run test", AutomationContent: "run-id"},
+	)
+	if err != nil || submission.State != "SUCCESS" || submission.DestinationID != 654 {
+		t.Fatalf("SubmitToRun = %#v, %v", submission, err)
+	}
+}
+
 func TestPollRetriesThrottlingButSubmissionDoesNotRetry(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
