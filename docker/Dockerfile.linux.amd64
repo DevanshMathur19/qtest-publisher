@@ -1,0 +1,9 @@
+ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12@sha256:52dcfbabb7457ea47c82f6e13af8c8a4a1d9f7b0145142b3ecab20f2b888411d
+FROM ${RUNTIME_IMAGE}
+COPY --chown=65532:65532 release/linux/amd64/qtest-publisher /qtest-publisher
+LABEL org.opencontainers.image.source="https://github.com/harness-community/qtest-publisher" \
+      org.opencontainers.image.revision="8e48fef728a860ad18f0522b83b75938dad0cae3" \
+      org.opencontainers.image.version="1.0.0" \
+      io.harness.release.status="candidate"
+USER 65532:65532
+ENTRYPOINT ["/qtest-publisher"]

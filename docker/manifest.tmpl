@@ -1,0 +1,30 @@
+image: harness/qtest-publisher:{{trimPrefix "v" build.tag}}
+manifests:
+  -
+    image: harness/qtest-publisher:{{trimPrefix "v" build.tag}}-linux-amd64
+    platform:
+      architecture: amd64
+      os: linux
+  -
+    image: harness/qtest-publisher:{{trimPrefix "v" build.tag}}-linux-arm64
+    platform:
+      architecture: arm64
+      os: linux
+  -
+    image: harness/qtest-publisher:{{trimPrefix "v" build.tag}}-windows-ltsc2019-amd64
+    platform:
+      architecture: amd64
+      os: windows
+      version: "10.0.17763.9245"
+  -
+    image: harness/qtest-publisher:{{trimPrefix "v" build.tag}}-windows-ltsc2022-amd64
+    platform:
+      architecture: amd64
+      os: windows
+      version: "10.0.20348.5622"
+  -
+    image: harness/qtest-publisher:{{trimPrefix "v" build.tag}}-windows-ltsc2025-amd64
+    platform:
+      architecture: amd64
+      os: windows
+      version: "10.0.26100.33438"

@@ -1,0 +1,13 @@
+# escape=`
+
+ARG RUNTIME_IMAGE=mcr.microsoft.com/windows/nanoserver@sha256:87af42244113104b3ce4b5646f9ec1ab6690e6753dd68924e698bdc2132546b3
+FROM ${RUNTIME_IMAGE}
+USER ContainerAdministrator
+WORKDIR C:/workspace
+COPY release/windows/amd64/qtest-publisher.exe C:/bin/qtest-publisher.exe
+LABEL org.opencontainers.image.source="https://github.com/harness-community/qtest-publisher" `
+      org.opencontainers.image.revision="8e48fef728a860ad18f0522b83b75938dad0cae3" `
+      org.opencontainers.image.version="1.0.0" `
+      io.harness.windows.build="20348" `
+      io.harness.release.status="candidate"
+ENTRYPOINT ["C:\\bin\\qtest-publisher.exe"]
