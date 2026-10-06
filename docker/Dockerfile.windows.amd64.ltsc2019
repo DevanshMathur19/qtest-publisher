@@ -5,7 +5,7 @@ FROM ${RUNTIME_IMAGE}
 USER ContainerAdministrator
 WORKDIR C:/workspace
 COPY release/windows/amd64/qtest-publisher.exe C:/bin/qtest-publisher.exe
-LABEL org.opencontainers.image.source="https://github.com/harness-community/qtest-publisher" `
+LABEL org.opencontainers.image.source="https://git.harness.io/gCoPSwHxS7ipOgx2iA9tOQ/default/Drone_Plugins/qtest-publisher" `
       org.opencontainers.image.revision="0f732e8585cd7f338f4cd39b9e5defa32723d6d2" `
       org.opencontainers.image.version="1.0.0" `
       io.harness.windows.build="17763" `
