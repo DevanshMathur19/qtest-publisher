@@ -2,11 +2,11 @@
 
 ARG RUNTIME_IMAGE=mcr.microsoft.com/windows/nanoserver@sha256:c5980a8cd05a3902130f95fbad5b7db35d21e00183b063ee6bca5c1dcab40ce9
 FROM ${RUNTIME_IMAGE}
-USER ContainerAdministrator
+USER ContainerUser
 WORKDIR C:/workspace
 COPY release/windows/amd64/qtest-publisher.exe C:/bin/qtest-publisher.exe
 LABEL org.opencontainers.image.source="https://github.com/DevanshMathur19/qtest-publisher" `
-      org.opencontainers.image.revision="816464df142eec022158fe7685772d8eabd65b82" `
+      org.opencontainers.image.revision="803c1f8de400c272a4a81395c8906bebaa6e1e84" `
       org.opencontainers.image.version="1.0.0" `
       io.harness.windows.build="17763" `
       io.harness.release.status="candidate"

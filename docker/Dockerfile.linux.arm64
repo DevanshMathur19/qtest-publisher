@@ -2,7 +2,7 @@ ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12@sha256:06c3c14b7fa252d9f4285
 FROM ${RUNTIME_IMAGE}
 COPY --chown=65532:65532 release/linux/arm64/qtest-publisher /qtest-publisher
 LABEL org.opencontainers.image.source="https://github.com/DevanshMathur19/qtest-publisher" \
-      org.opencontainers.image.revision="816464df142eec022158fe7685772d8eabd65b82" \
+      org.opencontainers.image.revision="803c1f8de400c272a4a81395c8906bebaa6e1e84" \
       org.opencontainers.image.version="1.0.0" \
       io.harness.release.status="candidate"
 USER 65532:65532
