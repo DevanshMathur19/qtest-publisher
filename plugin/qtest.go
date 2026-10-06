@@ -18,7 +18,19 @@ import (
 	"time"
 )
 
-const maxErrorBodyBytes = 16 * 1024
+const (
+	maxErrorBodyBytes   = 16 * 1024
+	maxSuccessBodyBytes = 4 * 1024 * 1024
+)
+
+type HTTPStatusError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("qTest API returned HTTP %d: %s", e.StatusCode, e.Body)
+}
 
 type QTestClient struct {
 	baseURL      string
@@ -148,6 +160,11 @@ func (c *QTestClient) ResolveSuite(
 	if err := c.doJSON(
 		ctx, http.MethodPost, endpoint, map[string]any{"name": name}, &suite, false,
 	); err != nil {
+		if submissionMayHaveBeenAccepted(err) {
+			return 0, &IndeterminateSubmissionError{
+				Err: fmt.Errorf("create qTest suite %q: %w", name, err),
+			}
+		}
 		return 0, fmt.Errorf("create qTest suite: %w", err)
 	}
 	if suite.ID <= 0 {
@@ -189,14 +206,18 @@ func (c *QTestClient) SubmitBatch(
 	}
 	var response queueResponse
 	if err := c.doJSON(ctx, http.MethodPost, endpoint, request, &response, false); err != nil {
-		return Submission{}, &IndeterminateSubmissionError{Err: err}
+		if submissionMayHaveBeenAccepted(err) {
+			return Submission{}, &IndeterminateSubmissionError{Err: err}
+		}
+		return Submission{}, err
 	}
 	if response.ID <= 0 {
 		return Submission{}, errors.New("qTest submission did not return a queue job ID")
 	}
-	response, err := c.Poll(ctx, response.ID)
+	jobID := response.ID
+	response, err := c.Poll(ctx, jobID)
 	if err != nil {
-		return Submission{}, err
+		return Submission{}, &IndeterminateSubmissionError{Err: err, JobID: jobID}
 	}
 	return Submission{
 		JobID: response.ID, State: response.State, Content: response.Content,
@@ -213,9 +234,20 @@ func (c *QTestClient) SubmitToRun(
 	)
 	var response map[string]any
 	if err := c.doJSON(ctx, http.MethodPost, endpoint, log, &response, false); err != nil {
-		return Submission{}, &IndeterminateSubmissionError{Err: err}
+		if submissionMayHaveBeenAccepted(err) {
+			return Submission{}, &IndeterminateSubmissionError{Err: err}
+		}
+		return Submission{}, err
 	}
 	return Submission{State: "SUCCESS", DestinationID: testRunID}, nil
+}
+
+func submissionMayHaveBeenAccepted(err error) bool {
+	var status *HTTPStatusError
+	if !errors.As(err, &status) {
+		return true
+	}
+	return status.StatusCode == http.StatusTooManyRequests || status.StatusCode >= 500
 }
 
 func (c *QTestClient) Poll(ctx context.Context, jobID int64) (queueResponse, error) {
@@ -252,10 +284,17 @@ func (c *QTestClient) Poll(ctx context.Context, jobID int64) (queueResponse, err
 }
 
 type IndeterminateSubmissionError struct {
-	Err error
+	Err   error
+	JobID int64
 }
 
 func (e *IndeterminateSubmissionError) Error() string {
+	if e.JobID > 0 {
+		return fmt.Sprintf(
+			"qTest submission job %d is indeterminate; reconcile that queue job before retrying: %v",
+			e.JobID, e.Err,
+		)
+	}
 	return "qTest submission outcome is indeterminate; reconcile in qTest before retrying: " + e.Err.Error()
 }
 
@@ -307,13 +346,20 @@ func (c *QTestClient) doJSON(
 			}
 			return fmt.Errorf("send request: %w", err)
 		}
-		data, readErr := io.ReadAll(io.LimitReader(response.Body, maxErrorBodyBytes+1))
+		limit := int64(maxErrorBodyBytes)
+		if response.StatusCode >= 200 && response.StatusCode < 300 {
+			limit = maxSuccessBodyBytes
+		}
+		data, readErr := io.ReadAll(io.LimitReader(response.Body, limit+1))
 		closeErr := response.Body.Close()
 		if readErr != nil {
 			return fmt.Errorf("read response: %w", readErr)
 		}
 		if closeErr != nil {
 			return fmt.Errorf("close response: %w", closeErr)
+		}
+		if int64(len(data)) > limit {
+			return fmt.Errorf("qTest response exceeds %d bytes", limit)
 		}
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
 			if retrySafe && attempt < attempts && isRetryableStatus(response.StatusCode) {
@@ -327,7 +373,7 @@ func (c *QTestClient) doJSON(
 			if c.token != "" {
 				bodyText = strings.ReplaceAll(bodyText, c.token, "[REDACTED]")
 			}
-			return fmt.Errorf("qTest API returned HTTP %d: %s", response.StatusCode, bodyText)
+			return &HTTPStatusError{StatusCode: response.StatusCode, Body: bodyText}
 		}
 		if output != nil && len(bytes.TrimSpace(data)) != 0 {
 			if err := json.Unmarshal(data, output); err != nil {

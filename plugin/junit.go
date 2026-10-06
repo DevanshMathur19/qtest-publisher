@@ -15,6 +15,8 @@ import (
 const (
 	maxJUnitFileBytes = 32 * 1024 * 1024
 	maxLogTextBytes   = 64 * 1024
+	maxCasesPerFile   = 1_000_000
+	maxSuiteDepth     = 256
 )
 
 type StepResult struct {
@@ -37,32 +39,17 @@ type TestResult struct {
 	SourceFile string
 }
 
-type junitDocument struct {
-	XMLName xml.Name
-	Suites  []junitSuite `xml:"testsuite"`
-}
-
-type junitSuite struct {
-	Name      string        `xml:"name,attr"`
-	Timestamp string        `xml:"timestamp,attr"`
-	Time      string        `xml:"time,attr"`
-	Cases     []junitCase   `xml:"testcase"`
-	Suites    []junitSuite  `xml:"testsuite"`
-	SystemOut string        `xml:"system-out"`
-	SystemErr string        `xml:"system-err"`
-}
-
 type junitCase struct {
-	Name       string       `xml:"name,attr"`
-	ClassName  string       `xml:"classname,attr"`
-	Time       string       `xml:"time,attr"`
-	Timestamp  string       `xml:"timestamp,attr"`
-	Status     string       `xml:"status,attr"`
-	Failure    *junitDetail `xml:"failure"`
-	Error      *junitDetail `xml:"error"`
-	Skipped    *junitDetail `xml:"skipped"`
-	SystemOut  string       `xml:"system-out"`
-	SystemErr  string       `xml:"system-err"`
+	Name       string          `xml:"name,attr"`
+	ClassName  string          `xml:"classname,attr"`
+	Time       string          `xml:"time,attr"`
+	Timestamp  string          `xml:"timestamp,attr"`
+	Status     string          `xml:"status,attr"`
+	Failure    *junitDetail    `xml:"failure"`
+	Error      *junitDetail    `xml:"error"`
+	Skipped    *junitDetail    `xml:"skipped"`
+	SystemOut  string          `xml:"system-out"`
+	SystemErr  string          `xml:"system-err"`
 	Properties []junitProperty `xml:"properties>property"`
 }
 
@@ -122,27 +109,90 @@ func ParseJUnitFile(path string, fallback time.Time) ([]flatCase, error) {
 		}
 	}
 
-	var suites []junitSuite
-	switch root.Name.Local {
-	case "testsuite":
-		var suite junitSuite
-		if err := decoder.DecodeElement(&suite, &root); err != nil {
-			return nil, fmt.Errorf("decode JUnit testsuite %s: %w", path, err)
-		}
-		suites = []junitSuite{suite}
-	case "testsuites":
-		var document junitDocument
-		if err := decoder.DecodeElement(&document, &root); err != nil {
-			return nil, fmt.Errorf("decode JUnit testsuites %s: %w", path, err)
-		}
-		suites = document.Suites
-	default:
+	if root.Name.Local != "testsuite" && root.Name.Local != "testsuites" {
 		return nil, fmt.Errorf("unsupported JUnit root element %q in %s", root.Name.Local, path)
 	}
 
 	var result []flatCase
-	for _, suite := range suites {
-		flattenSuite(&result, suite, "", fallback, path)
+	type suiteContext struct {
+		name  string
+		start time.Time
+	}
+	stack := []suiteContext{}
+	if root.Name.Local == "testsuite" {
+		stack = append(stack, suiteContext{
+			name:  attribute(root, "name"),
+			start: parseJUnitTime(attribute(root, "timestamp"), fallback),
+		})
+	}
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, fmt.Errorf("decode JUnit file %s: %w", path, err)
+		}
+		switch value := token.(type) {
+		case xml.StartElement:
+			switch value.Name.Local {
+			case "testsuite":
+				if len(stack) >= maxSuiteDepth {
+					return nil, fmt.Errorf("JUnit file %s exceeds suite depth %d", path, maxSuiteDepth)
+				}
+				parentName := ""
+				parentStart := fallback
+				if len(stack) != 0 {
+					parentName = stack[len(stack)-1].name
+					parentStart = stack[len(stack)-1].start
+				}
+				name := strings.TrimSpace(attribute(value, "name"))
+				if parentName != "" {
+					if name == "" {
+						name = parentName
+					} else {
+						name = parentName + "/" + name
+					}
+				}
+				stack = append(stack, suiteContext{
+					name:  name,
+					start: parseJUnitTime(attribute(value, "timestamp"), parentStart),
+				})
+			case "testcase":
+				if len(result) >= maxCasesPerFile {
+					return nil, fmt.Errorf("JUnit file %s exceeds %d test cases", path, maxCasesPerFile)
+				}
+				var test junitCase
+				if err := decoder.DecodeElement(&test, &value); err != nil {
+					return nil, fmt.Errorf("decode JUnit testcase %s: %w", path, err)
+				}
+				suiteName := ""
+				suiteStart := fallback
+				if len(stack) != 0 {
+					suiteName = stack[len(stack)-1].name
+					suiteStart = stack[len(stack)-1].start
+				}
+				start := parseJUnitTime(test.Timestamp, suiteStart)
+				status, detail := caseStatus(test)
+				result = append(result, flatCase{
+					Suite:      suiteName,
+					Name:       strings.TrimSpace(test.Name),
+					ClassName:  strings.TrimSpace(test.ClassName),
+					Status:     status,
+					Start:      start,
+					End:        start.Add(parseDurationSeconds(test.Time)),
+					Detail:     limitText(detail),
+					SystemOut:  limitText(test.SystemOut),
+					SystemErr:  limitText(test.SystemErr),
+					Properties: test.Properties,
+					SourceFile: path,
+				})
+			}
+		case xml.EndElement:
+			if value.Name.Local == "testsuite" && len(stack) != 0 {
+				stack = stack[:len(stack)-1]
+			}
+		}
 	}
 	if len(result) == 0 {
 		return nil, fmt.Errorf("JUnit file %s contains no test cases", path)
@@ -150,37 +200,13 @@ func ParseJUnitFile(path string, fallback time.Time) ([]flatCase, error) {
 	return result, nil
 }
 
-func flattenSuite(output *[]flatCase, suite junitSuite, parent string, fallback time.Time, source string) {
-	suiteName := strings.TrimSpace(suite.Name)
-	if parent != "" {
-		if suiteName == "" {
-			suiteName = parent
-		} else {
-			suiteName = parent + "/" + suiteName
+func attribute(element xml.StartElement, name string) string {
+	for _, item := range element.Attr {
+		if item.Name.Local == name {
+			return strings.TrimSpace(item.Value)
 		}
 	}
-	suiteStart := parseJUnitTime(suite.Timestamp, fallback)
-	for _, test := range suite.Cases {
-		start := parseJUnitTime(test.Timestamp, suiteStart)
-		duration := parseDurationSeconds(test.Time)
-		status, detail := caseStatus(test)
-		*output = append(*output, flatCase{
-			Suite:      suiteName,
-			Name:       strings.TrimSpace(test.Name),
-			ClassName:  strings.TrimSpace(test.ClassName),
-			Status:     status,
-			Start:      start,
-			End:        start.Add(duration),
-			Detail:     limitText(detail),
-			SystemOut:  limitText(test.SystemOut),
-			SystemErr:  limitText(test.SystemErr),
-			Properties: test.Properties,
-			SourceFile: source,
-		})
-	}
-	for _, child := range suite.Suites {
-		flattenSuite(output, child, suiteName, suiteStart, source)
-	}
+	return ""
 }
 
 func BuildResults(cases []flatCase, identityMode string, statuses StatusMap) []TestResult {

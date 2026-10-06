@@ -16,6 +16,7 @@ const (
 	defaultResultPath      = "**/junit/*.xml"
 	defaultBatchSize       = 100
 	defaultMaxPayloadBytes = 4 * 1024 * 1024
+	defaultMaxTestCases    = 1_000_000
 	defaultPollInterval    = 2 * time.Second
 	defaultTimeout         = 10 * time.Minute
 )
@@ -50,6 +51,7 @@ type Config struct {
 	EmptyResult     string
 	BatchSize       int
 	MaxPayloadBytes int
+	MaxTestCases    int
 	PollInterval    time.Duration
 	Timeout         time.Duration
 	CACert          string
@@ -96,6 +98,9 @@ func LoadConfig() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.MaxPayloadBytes, err = intEnv("PLUGIN_MAX_PAYLOAD_BYTES", defaultMaxPayloadBytes); err != nil {
+		return Config{}, err
+	}
+	if cfg.MaxTestCases, err = intEnv("PLUGIN_MAX_TEST_CASES", defaultMaxTestCases); err != nil {
 		return Config{}, err
 	}
 	if cfg.PollInterval, err = durationEnv("PLUGIN_POLL_INTERVAL", defaultPollInterval); err != nil {
@@ -184,6 +189,13 @@ func (c Config) Validate() error {
 	}
 	if c.MaxPayloadBytes < 1024 || c.MaxPayloadBytes > 50*1024*1024 {
 		return errors.New("PLUGIN_MAX_PAYLOAD_BYTES must be between 1024 and 52428800")
+	}
+	maxTestCases := c.MaxTestCases
+	if maxTestCases == 0 {
+		maxTestCases = defaultMaxTestCases
+	}
+	if maxTestCases < 1 || maxTestCases > 5_000_000 {
+		return errors.New("PLUGIN_MAX_TEST_CASES must be between 1 and 5000000")
 	}
 	if c.PollInterval < 100*time.Millisecond || c.PollInterval > time.Minute {
 		return errors.New("PLUGIN_POLL_INTERVAL must be between 100ms and 1m")

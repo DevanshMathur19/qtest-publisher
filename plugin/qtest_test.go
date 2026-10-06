@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -198,6 +199,65 @@ func TestPollRetriesThrottlingButSubmissionDoesNotRetry(t *testing.T) {
 	if !errors.As(err, &indeterminate) || calls.Load() != 1 {
 		t.Fatalf("expected one indeterminate POST, got %v, calls=%d", err, calls.Load())
 	}
+}
+
+func TestResolveSuiteAcceptsResponseLargerThanErrorLimit(t *testing.T) {
+	suites := make([]testSuiteResource, 0, 600)
+	for index := 0; index < 599; index++ {
+		suites = append(suites, testSuiteResource{
+			ID: int64(index + 1), Name: strings.Repeat("suite-", 6) + fmt.Sprint(index),
+		})
+	}
+	suites = append(suites, testSuiteResource{ID: 9001, Name: "Target"})
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(suites)
+	}))
+	defer server.Close()
+	client, _ := NewQTestClient(qtestConfig(server))
+	id, err := client.ResolveSuite(context.Background(), "release", 44, "Target", true)
+	if err != nil || id != 9001 {
+		t.Fatalf("ResolveSuite = %d, %v", id, err)
+	}
+}
+
+func TestSubmissionClassifiesRejectedAndPostPollFailures(t *testing.T) {
+	t.Run("rejected request is deterministic", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "denied", http.StatusUnauthorized)
+		}))
+		defer server.Close()
+		client, _ := NewQTestClient(qtestConfig(server))
+		_, err := client.SubmitBatch(
+			context.Background(), "test-cycle", 1,
+			[]automationLog{{Status: "PASSED", Name: "test", AutomationContent: "id"}},
+			time.Now(),
+		)
+		var indeterminate *IndeterminateSubmissionError
+		if err == nil || errors.As(err, &indeterminate) {
+			t.Fatalf("expected deterministic rejection, got %v", err)
+		}
+	})
+
+	t.Run("accepted job with failed poll is indeterminate", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost {
+				_, _ = io.WriteString(w, `{"id":321,"state":"PENDING"}`)
+				return
+			}
+			http.Error(w, "queue unavailable", http.StatusBadRequest)
+		}))
+		defer server.Close()
+		client, _ := NewQTestClient(qtestConfig(server))
+		_, err := client.SubmitBatch(
+			context.Background(), "test-cycle", 1,
+			[]automationLog{{Status: "PASSED", Name: "test", AutomationContent: "id"}},
+			time.Now(),
+		)
+		var indeterminate *IndeterminateSubmissionError
+		if !errors.As(err, &indeterminate) || indeterminate.JobID != 321 {
+			t.Fatalf("expected job 321 indeterminate error, got %v", err)
+		}
+	})
 }
 
 func TestCustomCAAndCancellation(t *testing.T) {

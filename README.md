@@ -51,6 +51,7 @@ hierarchical automation-log endpoint.
 | `empty_result` | `warn` | `warn` succeeds with `SKIPPED`; `fail` fails the step. |
 | `batch_size` | `100` | Maximum logs per request, from 1 through 1000. |
 | `max_payload_bytes` | `4194304` | Maximum encoded request size, up to 50 MiB. |
+| `max_test_cases` | `1000000` | Maximum total parsed test cases, up to 5,000,000. |
 | `poll_interval` | `2s` | Queue polling interval. |
 | `timeout` | `10m` | Whole-plugin timeout. |
 | `ca_cert` | empty | Runtime PEM bundle appended to the system trust roots. |
@@ -98,10 +99,14 @@ When `DRONE_OUTPUT` is available, the plugin emits:
 ## Retry and duplicate policy
 
 Safe GET and queue-poll operations retry bounded `429`, `502`, `503`, and
-`504` responses. Submission POSTs are not retried. A transport error or
-unexpected response after a POST is reported as indeterminate so an operator
-can reconcile qTest before retrying. Stable `automation_content` helps qTest
-reuse test objects but is not treated as a submission idempotency guarantee.
+`504` responses. Submission POSTs are not retried. A transport error,
+retryable HTTP response, or polling failure after qTest returns a queue ID is
+reported as indeterminate so an operator can reconcile qTest before retrying.
+Deterministic non-429 `4xx` responses are reported as rejected requests.
+For a partial multi-batch submission, `DRONE_OUTPUT` records completed and
+indeterminate queue IDs plus a `PARTIAL` or `INDETERMINATE` state. Stable
+`automation_content` helps qTest reuse test objects but is not treated as a
+submission idempotency guarantee.
 
 ## Platforms
 

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Outputs struct {
@@ -44,10 +45,17 @@ func Run(ctx context.Context, cfg Config, logger *log.Logger) (Outputs, error) {
 	}
 
 	var cases []flatCase
+	maxTestCases := cfg.MaxTestCases
+	if maxTestCases == 0 {
+		maxTestCases = defaultMaxTestCases
+	}
 	for _, path := range files {
 		parsed, err := ParseJUnitFile(path, cfg.ExecutionDate)
 		if err != nil {
 			return Outputs{}, err
+		}
+		if len(cases)+len(parsed) > maxTestCases {
+			return Outputs{}, fmt.Errorf("matched JUnit files exceed PLUGIN_MAX_TEST_CASES (%d)", maxTestCases)
 		}
 		cases = append(cases, parsed...)
 		logger.Printf("Parsed %d JUnit case(s) from %s", len(parsed), safeRelative(workdir, path))
@@ -88,9 +96,7 @@ func Run(ctx context.Context, cfg Config, logger *log.Logger) (Outputs, error) {
 	output := Outputs{
 		MatchedFiles:  len(files),
 		ParsedTests:   len(cases),
-		SubmittedLogs: len(logs),
 		DestinationID: destinationID,
-		State:         "SUCCESS",
 		ResultURL:     resultURL(cfg.BaseURL, cfg.ProjectID, destinationType, destinationID),
 	}
 
@@ -98,15 +104,17 @@ func Run(ctx context.Context, cfg Config, logger *log.Logger) (Outputs, error) {
 		for _, item := range logs {
 			submission, err := client.SubmitToRun(ctx, destinationID, item)
 			if err != nil {
-				return Outputs{}, err
+				return finishFailedOutput(cfg.OutputPath, output, err)
 			}
 			if submission.JobID > 0 {
 				output.JobIDs = append(output.JobIDs, submission.JobID)
 			}
+			output.SubmittedLogs++
 		}
 	} else {
 		batches, err := splitBatches(
 			logs, cfg.BatchSize, cfg.MaxPayloadBytes, destinationType, destinationID,
+			cfg.ExecutionDate,
 		)
 		if err != nil {
 			return Outputs{}, err
@@ -117,11 +125,13 @@ func Run(ctx context.Context, cfg Config, logger *log.Logger) (Outputs, error) {
 				ctx, destinationType, destinationID, batch, cfg.ExecutionDate,
 			)
 			if err != nil {
-				return Outputs{}, err
+				return finishFailedOutput(cfg.OutputPath, output, err)
 			}
 			output.JobIDs = append(output.JobIDs, submission.JobID)
+			output.SubmittedLogs += len(batch)
 		}
 	}
+	output.State = "SUCCESS"
 	if err := WriteOutputs(cfg.OutputPath, output); err != nil {
 		return Outputs{}, err
 	}
@@ -134,12 +144,13 @@ func Run(ctx context.Context, cfg Config, logger *log.Logger) (Outputs, error) {
 
 func splitBatches(
 	logs []automationLog, maxCount int, maxBytes int, destinationType string, destinationID int64,
+	executionDate time.Time,
 ) ([][]automationLog, error) {
 	var batches [][]automationLog
 	current := []automationLog{}
 	for _, item := range logs {
 		candidate := append(append([]automationLog(nil), current...), item)
-		size, err := encodedBatchSize(candidate, destinationType, destinationID)
+		size, err := encodedBatchSize(candidate, destinationType, destinationID, executionDate)
 		if err != nil {
 			return nil, err
 		}
@@ -151,7 +162,7 @@ func splitBatches(
 			}
 			batches = append(batches, current)
 			current = []automationLog{item}
-			size, err = encodedBatchSize(current, destinationType, destinationID)
+			size, err = encodedBatchSize(current, destinationType, destinationID, executionDate)
 			if err != nil {
 				return nil, err
 			}
@@ -171,9 +182,12 @@ func splitBatches(
 }
 
 func encodedBatchSize(
-	logs []automationLog, destinationType string, destinationID int64,
+	logs []automationLog, destinationType string, destinationID int64, executionDate time.Time,
 ) (int, error) {
-	request := automationRequest{TestLogs: logs}
+	request := automationRequest{
+		ExecutionDate: executionDate.UTC().Format(time.RFC3339),
+		TestLogs:      logs,
+	}
 	switch destinationType {
 	case "test-cycle":
 		request.TestCycle = strconv.FormatInt(destinationID, 10)
@@ -187,6 +201,24 @@ func encodedBatchSize(
 		return 0, fmt.Errorf("encode qTest batch: %w", err)
 	}
 	return len(data), nil
+}
+
+func finishFailedOutput(path string, output Outputs, runErr error) (Outputs, error) {
+	var indeterminate *IndeterminateSubmissionError
+	if errors.As(runErr, &indeterminate) {
+		output.State = "INDETERMINATE"
+		if indeterminate.JobID > 0 {
+			output.JobIDs = append(output.JobIDs, indeterminate.JobID)
+		}
+	} else if output.SubmittedLogs > 0 {
+		output.State = "PARTIAL"
+	} else {
+		output.State = "FAILED"
+	}
+	if outputErr := WriteOutputs(path, output); outputErr != nil {
+		return output, fmt.Errorf("%w; additionally failed to write partial outputs: %v", runErr, outputErr)
+	}
+	return output, runErr
 }
 
 func WriteOutputs(path string, output Outputs) error {

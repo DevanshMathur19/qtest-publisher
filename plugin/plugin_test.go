@@ -117,21 +117,79 @@ func TestRunNoMatchWarnsWithoutCallingAPI(t *testing.T) {
 	}
 }
 
+func TestRunWritesPartialOutputsBeforeReturningBatchFailure(t *testing.T) {
+	postCount := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"id":501,"state":"SUCCESS"}`)
+			return
+		}
+		postCount++
+		if postCount == 1 {
+			_, _ = io.WriteString(w, `{"id":501,"state":"PENDING"}`)
+			return
+		}
+		http.Error(w, "rejected", http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(root, "results.xml"),
+		[]byte(`<testsuite name="suite"><testcase classname="C" name="one"/><testcase classname="C" name="two"/></testsuite>`),
+		0600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	old, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(old) }()
+
+	outputPath := filepath.Join(root, "output.env")
+	cfg := qtestConfig(server)
+	cfg.ResultPaths = []string{"results.xml"}
+	cfg.DestinationType = "test-cycle"
+	cfg.DestinationID = 1
+	cfg.IdentityMode = "method"
+	cfg.Statuses = StatusMap{Passed: "PASSED", Failed: "FAILED", Error: "FAILED", Skipped: "SKIPPED"}
+	cfg.ModuleNames = []string{"Automation"}
+	cfg.BatchSize = 1
+	cfg.MaxPayloadBytes = 1024 * 1024
+	cfg.OutputPath = outputPath
+	cfg.ExecutionDate = time.Now()
+
+	output, err := Run(context.Background(), cfg, log.New(io.Discard, "", 0))
+	if err == nil || output.State != "PARTIAL" || output.SubmittedLogs != 1 {
+		t.Fatalf("expected one completed partial batch, output=%#v err=%v", output, err)
+	}
+	data, readErr := os.ReadFile(outputPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !strings.Contains(string(data), "QTEST_STATE=PARTIAL") ||
+		!strings.Contains(string(data), "QTEST_JOB_IDS=501") {
+		t.Fatalf("partial reconciliation outputs missing: %s", data)
+	}
+}
+
 func TestSplitBatchesUsesCountAndEncodedBytes(t *testing.T) {
 	logs := []automationLog{
 		{Name: "one", Note: strings.Repeat("a", 100)},
 		{Name: "two", Note: strings.Repeat("b", 100)},
 		{Name: "three", Note: strings.Repeat("c", 100)},
 	}
-	batches, err := splitBatches(logs, 2, 1000, "test-cycle", 1)
+	executionDate := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
+	batches, err := splitBatches(logs, 2, 1000, "test-cycle", 1, executionDate)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(batches) != 2 || len(batches[0]) != 2 || len(batches[1]) != 1 {
 		t.Fatalf("unexpected count batches: %#v", batches)
 	}
-	oneSize, _ := encodedBatchSize(logs[:1], "test-cycle", 1)
-	batches, err = splitBatches(logs, 10, oneSize+10, "test-cycle", 1)
+	oneSize, _ := encodedBatchSize(logs[:1], "test-cycle", 1, executionDate)
+	batches, err = splitBatches(logs, 10, oneSize+10, "test-cycle", 1, executionDate)
 	if err != nil {
 		t.Fatal(err)
 	}
