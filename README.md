@@ -72,7 +72,7 @@ Input settings become uppercase `PLUGIN_` environment variables. For example,
     identifier: publish_qtest
     spec:
       connectorRef: account.harnessImage
-      image: harness/qtest-publisher:1.0.0
+      image: harness/qtest-publisher:1.0.1
       settings:
         qtest_url: https://example.qtestnet.com
         bearer_token: <+secrets.getValue("qtestApiToken")>
@@ -118,3 +118,8 @@ submission idempotency guarantee.
 
 Windows images use matching Nano Server final images and must run on matching
 Windows workers under process isolation.
+
+All platform images expose the same path-resolved `qtest-publisher`
+entrypoint. This is required because Harness resolves plugin metadata outside
+the target step container before Kubernetes selects the platform child from a
+multi-platform index.
