@@ -7,7 +7,7 @@ WORKDIR C:/workspace
 COPY release/windows/amd64/qtest-publisher.exe C:/bin/qtest-publisher.exe
 ENV PATH="C:\bin;C:\Windows\system32;C:\Windows"
 LABEL org.opencontainers.image.source="https://github.com/DevanshMathur19/qtest-publisher" `
-      org.opencontainers.image.revision="803c1f8de400c272a4a81395c8906bebaa6e1e84" `
+      org.opencontainers.image.revision="0b2e70d1b468efdbe249ee1a72536c6d161414d1" `
       org.opencontainers.image.version="1.0.1" `
       io.harness.windows.build="26100" `
       io.harness.release.status="candidate"
